@@ -71,7 +71,18 @@ const getMySwaps = async (req, res) => {
       .populate('provider', 'name email collegeName location skillsOffered')
       .sort({ createdAt: -1 });
 
-    return res.json(swaps);
+    // Hide contact email and meetingLink until swap is accepted or completed
+    const sanitizedSwaps = swaps.map((swap) => {
+      const obj = swap.toObject();
+      if (!['accepted', 'completed'].includes(obj.status)) {
+        if (obj.requester) delete obj.requester.email;
+        if (obj.provider) delete obj.provider.email;
+        obj.meetingLink = '';
+      }
+      return obj;
+    });
+
+    return res.json(sanitizedSwaps);
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -112,6 +123,43 @@ const respondToSwap = async (req, res) => {
       .populate('provider', 'name email collegeName skillsOffered');
 
     return res.json(updated);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route PATCH /api/swaps/:id/meeting-link
+const updateMeetingLink = async (req, res) => {
+  try {
+    const { meetingLink } = req.body;
+    const swap = await SwapRequest.findById(req.params.id);
+
+    if (!swap) {
+      return res.status(404).json({ message: 'Swap request not found' });
+    }
+
+    const userId = req.user._id.toString();
+    const isParticipant =
+      swap.requester.toString() === userId ||
+      swap.provider.toString() === userId;
+
+    if (!isParticipant) {
+      return res.status(403).json({ message: 'Not authorized for this swap' });
+    }
+
+    if (swap.status !== 'accepted') {
+      return res.status(400).json({
+        message: 'Meeting link can only be added once the swap is accepted',
+      });
+    }
+
+    swap.meetingLink = (meetingLink || '').trim();
+    await swap.save();
+
+    return res.json({
+      message: 'Session link updated successfully',
+      meetingLink: swap.meetingLink,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -183,5 +231,6 @@ module.exports = {
   createSwapRequest,
   getMySwaps,
   respondToSwap,
+  updateMeetingLink,
   completeSwap,
 };
